@@ -1,0 +1,1 @@
+{"name":"mealday-app","private":true,"version":"0.1.0","scripts":{"build":"node scripts/build.cjs"},"dependencies":{"@supabase/supabase-js":"2.118.0","leaflet":"1.9.4","react":"^19.0.0","react-dom":"^19.0.0"},"devDependencies":{"esbuild":"^0.25.0"}}

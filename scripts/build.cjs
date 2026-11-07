@@ -1,0 +1,1 @@
+require('esbuild').buildSync({entryPoints:['src/main.tsx'],bundle:true,outfile:'dist/app.js',minify:true,loader:{'.png':'dataurl'},external:['/assets/*'],define:{'process.env.NODE_ENV':'"production"'},target:'es2020'});

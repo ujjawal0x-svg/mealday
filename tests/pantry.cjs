@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('fs'),os=require('os'),path=require('path');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pantry-test-'));
+require('esbuild').buildSync({entryPoints:['src/engine.ts'],bundle:true,platform:'node',format:'cjs',outfile:path.join(dir,'engine.cjs')});
+const e=require(path.join(dir,'engine.cjs'));const original=e.recipes;
+const base={...e.initialProfile,days:[0],people:1,budget:1000,minutes:60};
+const pasta=original.find(r=>r.id==='tomato-pasta'),egg=original.find(r=>r.id==='rice-egg');
+e.installCatalogue(e.stock,[pasta,egg]);
+const p={...base,availableIngredients:['rice','egg','carrot','pepper']};
+assert.equal(e.generate(p,{},0)[0].recipeId,egg.id);
+assert.equal(e.generate({...p,dislikedIngredients:['egg']},{},0)[0].recipeId,pasta.id);
+assert(!e.compatible(egg,{...p,allergies:['Egg']}));
+assert(!e.compatible(egg,{...p,diet:'Vegan'}));
+assert.equal(e.basket([{day:0,recipeId:egg.id}],p,{}).find(x=>x.key==='rice').have,0);
+assert.equal(e.basket([{day:0,recipeId:egg.id}],p,{rice:60}).find(x=>x.key==='rice').packs,0);
+assert(e.pantryMatch(egg,base,{egg:2}).includes('egg'));
+assert.equal(e.generate({...base,preferredStyles:['Comfort']},{},0).length,1);
+fs.rmSync(dir,{recursive:true});console.log('PASS pantry: ranking, dislikes, allergy/diet precedence, presence vs quantity, existing stock');

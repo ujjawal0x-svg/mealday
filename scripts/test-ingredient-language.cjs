@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),esbuild=require('esbuild'),fs=require('fs');
+fs.writeFileSync('/tmp/mealday-ingredient-language-entry.ts',`export * from '${process.cwd()}/src/ingredientLabels'; export * from '${process.cwd()}/src/engine';`);
+esbuild.buildSync({entryPoints:['/tmp/mealday-ingredient-language-entry.ts'],outfile:'/tmp/mealday-ingredient-language.cjs',bundle:true,platform:'node',format:'cjs'});
+const {ingredientName,ingredientUnit,canonicalIngredients,stock,basket,initialProfile,mealChoices}=require('/tmp/mealday-ingredient-language.cjs');
+const missing=[];
+for(const [key,item]of Object.entries(canonicalIngredients()))for(const lang of ['hi','ar'])if(ingredientName(item.name,key,lang)===item.name)missing.push(`${key}: ${item.name} (${lang})`);
+assert.deepEqual(missing,[]);
+for(const [key,item]of Object.entries(stock))for(const lang of ['hi','ar'])assert.notEqual(ingredientName(item.name,key,lang),item.name,`${key}: ${item.name} ${lang}`);
+assert.equal(ingredientName('Onion','onion','hi'),'प्याज़');assert.equal(ingredientName('Basmati rice','rice','ar'),'أرز بسمتي');assert.equal(ingredientName('Onion','onion','en'),'Onion');assert.equal(ingredientName('Uncatalogued ingredient',undefined,'ar'),'Uncatalogued ingredient');
+assert.notEqual(ingredientName('Rice','rice','hi'),ingredientName('Cooked rice',undefined,'hi'));assert.notEqual(ingredientName('Ground cumin',undefined,'ar'),ingredientName('cumin seeds',undefined,'ar'));
+assert.equal(ingredientUnit('g','ar'),'غ');assert.equal(ingredientUnit('ml','hi'),'मिली');assert.equal(ingredientUnit('g','en'),'g');
+const p={...initialProfile,budget:10000};const r=mealChoices(p,'dinner')[0];const plan=[{day:0,meal:'dinner',recipeId:r.id}];const before=JSON.stringify(basket(plan,p,{}));for(const i of basket(plan,p,{}))ingredientName(i.name,i.key,'ar');assert.equal(JSON.stringify(basket(plan,p,{})),before);
+console.log(`PASS: all ${Object.keys(canonicalIngredients()).length} canonical and ${Object.keys(stock).length} source ingredients localized; forms, units, English fallback and calculations preserved.`);

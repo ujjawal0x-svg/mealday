@@ -1,4 +1,3 @@
-drwxr-xr-x 11 root root 4096 Nov  7 15:44 mealday-github-export
 # Mealday
 
 A responsive meal-planning web app with one active route at a time. Approved white-green visual design.

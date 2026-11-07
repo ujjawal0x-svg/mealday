@@ -1,0 +1,1 @@
+require('esbuild').buildSync({entryPoints:['functions/mealday-personalize/core-entry.ts'],outfile:'functions/mealday-personalize/core.js',bundle:true,platform:'neutral',format:'esm',minify:true,target:'es2022'});

@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),esbuild=require('esbuild');
+esbuild.buildSync({entryPoints:['src/cloudSnapshot.ts'],outfile:'/tmp/mealday-cloud-snapshot.cjs',bundle:true,platform:'node',format:'cjs'});
+const {snapshotKey,preserveLocalChanges}=require('/tmp/mealday-cloud-snapshot.cjs');
+const original={profile:{shop:'Any supermarket',people:2},kitchen:{plan:[]}};
+const local={...original,profile:{...original.profile,shop:'Carrefour'}};
+assert(preserveLocalChanges(local,original,true));
+assert(!preserveLocalChanges(local,original,false));
+assert(!preserveLocalChanges(local,null,true));
+assert(!preserveLocalChanges(local,local,true));
+assert.equal(snapshotKey({a:1,b:2}),snapshotKey({b:2,a:1}));
+assert(!preserveLocalChanges({kitchen:{plan:[]},profile:{people:2,shop:'Any supermarket'}},original,true));
+console.log('PASS: supermarket changes retained for same account, cross-account isolation, saved baseline and object ordering.');

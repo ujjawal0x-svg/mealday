@@ -1,0 +1,32 @@
+const esbuild=require('esbuild'),assert=require('node:assert/strict');
+for(const [src,out] of [['src/priceLogic.ts','/tmp/mealday-price-logic.cjs'],['backend/prices/core.ts','/tmp/mealday-price-core.cjs']])esbuild.buildSync({entryPoints:[src],outfile:out,bundle:true,platform:'node',format:'cjs'});
+const {resolvePrices,validRecord,summarizePriceSources}=require('/tmp/mealday-price-logic.cjs'),{readOffer}=require('/tmp/mealday-price-core.cjs');
+const now=Date.now(),i={key:'rice',name:'Basmati rice',pack:1000,unit:'g',packs:2,price:14,cost:28};
+const r={key:'rice',shop:'Carrefour',city:'Dubai',pack:1000,unit:'g',price:9.99,url:'https://www.carrefouruae.com/product',product:'Basmati rice 1000g',checkedAt:new Date(now-1000).toISOString()};
+assert.equal(resolvePrices([i],[r],'Carrefour','Dubai',[r],now)[0].cost,19.98);
+assert.equal(resolvePrices([i],[r],'Carrefour','Dubai',[],now)[0].priceStatus,'Saved store price');
+assert.equal(resolvePrices([i],[r],'Carrefour','Ajman',[],now)[0].cost,28);
+for(const change of [{price:0},{price:NaN},{pack:500},{url:'https://www.carrefouruae.com.evil.com/x'},{checkedAt:new Date(now+1000).toISOString()},{checkedAt:'bad'}])assert.equal(validRecord({...r,...change},i,'Carrefour','Dubai',now),false);
+assert.equal(resolvePrices([i],[{...r,checkedAt:new Date(now-31*86400000).toISOString()}],'Carrefour','Dubai',[],now)[0].priceStatus,'Catalogue estimate');
+const html=x=>`<script type="application/ld+json">${JSON.stringify(x)}</script>`,p={'@type':'Product',name:'Basmati rice 1000g',offers:{price:9.99,priceCurrency:'AED',availability:'https://schema.org/InStock'}};
+assert.equal(readOffer(html(p),i).price,9.99);assert.equal(readOffer(html({...p,name:'Basmati rice 500g'}),i),null);
+for(const change of [{priceCurrency:'USD'},{availability:'https://schema.org/OutOfStock'},{price:-1},{priceValidUntil:'2020-01-01'}])assert.equal(readOffer(html({...p,offers:{...p.offers,...change}}),i),null);
+assert.equal(readOffer(html([p,{...p,offers:{...p.offers,price:20}}]),i),null);
+console.log('Price source, pack, freshness, fallback and offer tests passed');
+esbuild.buildSync({entryPoints:['backend/prices/tavily.ts'],outfile:'/tmp/mealday-tavily.cjs',bundle:true,platform:'node',format:'cjs'});
+const {matchingTitle,searchPrice,officialUrl}=require('/tmp/mealday-tavily.cjs');
+assert(matchingTitle('Buy Basmati rice, 1kg Online',i));
+assert(!matchingTitle('Buy Basmati rice, 5kg Online',i));
+assert(!matchingTitle('Buy Basmati rice 1kg Pack of 4',i));
+assert(!officialUrl('https://www.carrefouruae.com.evil.test/p/1','www.carrefouruae.com'));
+const result={title:'Basmati rice 1kg',url:'https://www.carrefouruae.com/p/1',content:'Basmati rice 1kg AED 9.99 Including VAT'};
+assert.equal(searchPrice(result,i,'www.carrefouruae.com').price,9.99);
+for(const change of [{content:'AED 9.99 AED 12.99'},{content:'No price available'},{content:'AED 9.99 per kg'},{content:'Out of stock AED 9.99'},{url:'https://www.carrefouruae.com/c/rice'}])assert.equal(searchPrice({...result,...change},i,'www.carrefouruae.com'),null);
+assert.equal(resolvePrices([i],[{...r,sourceKind:'search'}],'Carrefour','Dubai',[{...r,sourceKind:'search'}],now)[0].priceStatus,'Indexed store price');
+console.log('Tavily matching, official-domain, ambiguous price and indexed freshness tests passed');
+// Actual Tavily product-result format observed during the connection regression test.
+assert.equal(searchPrice({title:'Buy Tilda Pure Basmati Rice, 1kg Online',url:'https://www.carrefouruae.com/mafuae/en/indian-basmati-rice/tilda-basmati-rice-1kg/p/79241',content:'Shop Tilda Pure Basmati Rice, 1kg online now at Carrefour UAE. 1kg AED 17 .79 Including VAT Pack Size 1kg Sold & Shipped.'},i,'www.carrefouruae.com').price,17.79);
+const changed=resolvePrices([i],[{...r,price:17.79,sourceKind:'search'}],'Carrefour','Dubai',[{...r,price:17.79,sourceKind:'search'}],now)[0];
+assert.equal(changed.cost,35.58);assert.equal(changed.priceStatus,'Indexed store price');
+
+assert.deepEqual(summarizePriceSources([...resolvePrices([i],[r],'Carrefour','Dubai',[r],now),...resolvePrices([i],[r],'Carrefour','Ajman',[],now)]),[{label:'Retailer page price',count:1,subtotal:19.98},{label:'Catalogue estimate',count:1,subtotal:28}]);

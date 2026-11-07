@@ -1,0 +1,38 @@
+const assert=require('node:assert/strict'),esbuild=require('esbuild'),fs=require('fs'),os=require('os'),path=require('path');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mealday-ai-'));
+esbuild.buildSync({entryPoints:['functions/mealday-personalize/core-entry.ts'],bundle:true,platform:'node',format:'cjs',outfile:path.join(dir,'core.cjs')});
+const x=require(path.join(dir,'core.cjs'));
+const p={...x.initialProfile,cuisine:'Arab',budget:500,minutes:30,people:2,mealTypes:['dinner'],allergies:['Sesame'],days:[0]};
+const base=x.adaptationBases(p,'dinner').find(r=>r.id==='arab-adas');assert(base);
+const raw={name:'Carrot and red lentil soup variation',time:25,diet:'vegan',appliances:['Hob'],items:[['lentils',70],['carrot',80],['onion',30],['cumin',1],['oil',5]],steps:[{text:'Rinse the lentils and dice the carrot and onion.',ingredients:['lentils','carrot','onion']},{text:'Soften onion and carrot in the oil. Add cumin and lentils. Cover with water, simmer until tender, then serve.',ingredients:['onion','carrot','oil','cumin','lentils']}]};
+const id='ai-'+'a'.repeat(24),r=x.validateAdaptation(raw,p,base,'dinner',id);assert.equal(r.cuisine,'Arab');assert.equal(r.imageUrl,undefined);assert(r.quantityNotes[0].includes('not chef-tested'));
+for(const invalid of [{...raw,items:[...raw.items,['tahini',10]]},{...raw,time:60},{...raw,appliances:['Oven']},{...raw,items:[['unknown',10],['lentils',70]]},{...raw,items:[['lentils',-1],['carrot',30]]},{...raw,name:'Soup with wine'},{...raw,steps:[raw.steps[0],{text:'Stir in tahini and sesame seeds before serving.',ingredients:['lentils']}]},{...raw,steps:[raw.steps[0],{text:'Mix in more spinach.',ingredients:['spinach']}] }])assert.throws(()=>x.validateAdaptation(invalid,p,base,'dinner'),undefined,JSON.stringify(invalid));
+assert.throws(()=>x.validateAdaptation({...raw,items:base.items,appliances:base.appliances},p,base,'dinner'));
+assert.throws(()=>x.validateAdaptation(raw,{...p,lowCook:true},base,'lunch'));
+assert.throws(()=>x.aiProfile({...p,cuisine:'Unknown'}));assert.throws(()=>x.aiProfile({...p,allergies:['unknown']}));assert.throws(()=>x.aiProfile({...p,days:[0,0]}));
+assert(x.adaptationBases(p,'dinner').every(r=>r.cuisine==='Arab'&&!r.id.startsWith('kaggle-')));
+assert(!x.adaptationIngredients(p,base,'dinner').some(i=>i.id==='tahini'));
+assert.equal(x.restorePersonalRecipes([r]).length,1);assert.equal(x.restorePersonalRecipes([{...r,items:[['unknown',3]]}]).length,0);
+const before=x.recipes.length;const cost=x.withRecipes([r],()=>x.assertWithinBudget([{day:0,meal:'dinner',mode:'cook',recipeId:id}],p,{}));assert(cost>0);assert.equal(x.recipes.length,before);assert(!x.recipes.some(v=>v.id===id));assert.throws(()=>x.withRecipes([r],()=>x.assertWithinBudget([{day:0,meal:'dinner',recipeId:id}],{...p,budget:1},{})));assert.equal(x.recipes.length,before);
+x.mergeRecipes([r]);x.installCatalogue({},[]);assert(x.recipes.some(v=>v.id===id));const plan=x.generateDayPlan({...p,days:[0]}, {},1);assert(plan.length===1);assert(x.mealChoices(p,'dinner').some(v=>v.id===id));x.clearPersonalRecipes();assert(!x.recipes.some(v=>v.id===id));
+// Exercise the actual deployed handler with fake auth/provider boundaries. No external calls.
+let env={SUPABASE_URL:'https://example.supabase.co',SUPABASE_ANON_KEY:'test',SUPABASE_SERVICE_ROLE_KEY:'test'},authOK=true,quotaOK=true,calls=0,providerContext=null,answer=raw;
+global.Deno={env:{get:k=>env[k]},serve:()=>{}};
+global.__aiDb={auth:{getUser:async()=>({data:{user:authOK?{id:'test-user'}:null},error:authOK?null:{message:'not signed in'}})},from:()=>({select:()=>({eq:()=>({limit:async()=>({data:[],error:null})})})}),rpc:async()=>({data:quotaOK,error:null})};
+global.fetch=async(url,options)=>{calls++;providerContext=JSON.parse(options.body);return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(answer)}}]}),{status:200})};
+fs.writeFileSync(path.join(dir,'mock-supabase.js'),'export const createClient=()=>globalThis.__aiDb;');
+esbuild.buildSync({entryPoints:['functions/mealday-personalize/index.ts'],bundle:true,platform:'node',format:'cjs',outfile:path.join(dir,'handler.cjs'),alias:{'npm:@supabase/supabase-js@2.118.0':path.join(dir,'mock-supabase.js')}});
+const {handle}=require(path.join(dir,'handler.cjs'));
+const req=body=>new Request('https://example.test',{method:'POST',headers:{Authorization:'Bearer test','Content-Type':'application/json'},body:JSON.stringify(body)});
+(async()=>{
+ let response=await handle(req({action:'status'}));assert.equal((await response.json()).configured,false);
+ const input={action:'adapt',consent:true,provider:'groq',profile:{...p,name:'PRIVATE NAME',city:'PRIVATE ADDRESS'},meal:'dinner',baseId:base.id,pantry:{lentils:100},plan:[],personalRecipes:[]};
+ response=await handle(req(input));assert.equal(response.status,503);assert.equal(calls,0);
+ env.GROQ_API_KEY='test-key';response=await handle(req({...input,consent:false}));assert.equal(response.status,400);assert.equal(calls,0);response=await handle(req({...input,provider:'gemini'}));assert.equal(response.status,409);assert.equal(calls,0);authOK=false;response=await handle(req(input));assert.equal(response.status,401);assert.equal(calls,0);
+ authOK=true;quotaOK=false;response=await handle(req(input));assert.equal(response.status,429);assert.equal(calls,0);
+ quotaOK=true;response=await handle(req(input));let body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert(body.recipe.id.startsWith('ai-'));assert(body.total>0);assert.equal(body.recipe.cuisine,'Arab');assert(!JSON.stringify(providerContext).includes('PRIVATE'));assert(!JSON.stringify(providerContext).includes('test-user'));assert(!JSON.stringify(providerContext).includes('test-key'));
+ response=await handle(req({...input,profile:{...p,budget:1}}));assert.equal(response.status,422);body=await response.json();assert(body.error.includes('above'));
+ answer={...raw,items:[['tahini',10],['lentils',70]]};response=await handle(req(input));assert.equal(response.status,422);
+ assert.equal((await handle(new Request('https://example.test',{method:'GET'}))).status,405);
+ console.log('PASS AI recipes: cuisine/base selection, ingredient IDs/units, quantities, method references, sesame exclusion, equipment/time, low-cook, diet, restore/logout, catalogue refresh, private temporary quotes, strict budget, authenticated handler, missing key, quotas, valid/invalid provider output and payload minimization.');fs.rmSync(dir,{recursive:true});
+})().catch(e=>{console.error(e);process.exitCode=1});
